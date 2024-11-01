@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soccer Tournament Tracker</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #1b1b1b; color: #fff; }
+        .hidden { display: none; }
+        .container { max-width: 800px; margin: auto; padding: 20px; }
+        .tab { display: inline-block; margin-right: 10px; cursor: pointer; padding: 10px; background: #333; border-radius: 5px; color: #fff; }
+        .tab.active { background: #4caf50; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 8px; text-align: center; border: 1px solid #444; }
+        th { background-color: #333; }
+        #headerImage { max-width: 100%; margin-top: 20px; }
+        #scheduleList li { cursor: pointer; color: #4caf50; }
+        .score-input { width: 50px; text-align: center; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.8); }
+        .modal-content { background-color: #333; padding: 20px; border-radius: 5px; max-width: 400px; margin: 100px auto; color: #fff; }
+        .close-btn { cursor: pointer; float: right; color: #fff; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Soccer Tournament Tracker</h1>
+    
+    <div>
+        <span class="tab active" onclick="showTab('existingSchedules')">Existing Schedules</span>
+        <span class="tab" onclick="showTab('newSchedule')">New Schedule</span>
+    </div>
+
+    <!-- Existing Schedules Tab -->
+    <div id="existingSchedules" class="tab-content">
+        <h2>Existing Schedules</h2>
+        <ul id="scheduleList"></ul>
+    </div>
+
+    <!-- New Schedule Tab -->
+    <div id="newSchedule" class="tab-content hidden">
+        <h2>Create New Schedule</h2>
+        <label>Tournament Name: <input type="text" id="newTournamentName"></label><br>
+        <label>Description:</label><br>
+        <textarea id="newTournamentDescription" rows="3" style="width: 100%;"></textarea><br>
+        <label>Number of Teams: <input type="number" id="newTeamCount"></label><br>
+        <label>Team List (one per line):</label><br>
+        <textarea id="newTeamList" rows="10" style="width: 100%;"></textarea><br>
+        <label>Header Image: <input type="file" id="newTournamentImage" accept="image/*"></label><br><br>
+        <button onclick="createNewSchedule()">Create Schedule</button>
+    </div>
+
+    <!-- Schedule Details Tab -->
+    <div id="scheduleDetails" class="tab-content hidden">
+        <div>
+            <h2 id="tournamentName"></h2>
+            <p id="tournamentDescription"></p>
+            <img id="headerImage" class="hidden" alt="Tournament Header">
+            <span class="tab active" onclick="showScheduleTab('standings')">Standings</span>
+            <span class="tab" onclick="showScheduleTab('matches')">Matches</span>
+            <span id="manageTab" class="tab hidden" onclick="showScheduleTab('manage')">Manage</span>
+        </div>
+        
+        <!-- Standings Tab -->
+        <div id="standings" class="schedule-tab-content">
+            <h2>Standings</h2>
+            <div id="standingsTable"></div>
+        </div>
+
+        <!-- Matches Tab -->
+        <div id="matches" class="schedule-tab-content hidden">
+            <h2>Match Schedule</h2>
+            <div id="matchesList"></div>
+        </div>
+
+        <!-- Manage Tab -->
+        <div id="manage" class="schedule-tab-content hidden">
+            <h2>Manage Schedule</h2>
+            <label>Tournament Name: <input type="text" id="manageTournamentName"></label><br>
+            <label>Team List (one per line):</label><br>
+            <textarea id="manageTeamList" rows="10" style="width: 100%;"></textarea><br>
+            <button onclick="publishChanges()">Publish Changes</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for Entering Scores -->
+<div id="scoreModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeModal()">×</span>
+        <h2>Enter Score</h2>
+        <p id="modalMatchInfo"></p>
+        <label>Score for <span id="modalTeam1"></span>: <input type="number" id="modalTeam1Score" class="score-input"></label><br>
+        <label>Score for <span id="modalTeam2"></span>: <input type="number" id="modalTeam2Score" class="score-input"></label><br><br>
+        <button onclick="saveScore()">Save Score</button>
+    </div>
+</div>
+
+<script>
+    let schedules = [];
+    let currentScheduleIndex = null;
+    let isAdmin = true;
+    let currentMatchIndex = null;
+
+    document.addEventListener("DOMContentLoaded", () => {
+        if (isAdmin) document.getElementById("manageTab").classList.remove("hidden");
+    });
+
+    function showTab(tabName) {
+        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.add('hidden'));
+        document.getElementById(tabName).classList.remove('hidden');
+        document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+        document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
+        if (tabName === 'existingSchedules') renderScheduleList();
+    }
+
+    function showScheduleTab(scheduleTabName) {
+        document.querySelectorAll('.schedule-tab-content').forEach(tab => tab.classList.add('hidden'));
+        document.getElementById(scheduleTabName).classList.remove('hidden');
+        document.querySelectorAll('#scheduleDetails .tab').forEach(tab => tab.classList.remove('active'));
+        document.querySelector(`#scheduleDetails .tab[onclick="showScheduleTab('${scheduleTabName}')"]`).classList.add('active');
+    }
+
+    function createNewSchedule() {
+        const name = document.getElementById("newTournamentName").value.trim();
+        const description = document.getElementById("newTournamentDescription").value.trim();
+        const teams = document.getElementById("newTeamList").value.split("\n").map(team => team.trim()).filter(Boolean);
+        const imageFile = document.getElementById("newTournamentImage").files[0];
+
+        if (name === "" || teams.length < 2) {
+            alert("Please provide a tournament name and at least two teams.");
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const newSchedule = {
+                name: name,
+                description: description,
+                teams: teams,
+                image: event.target.result,
+                matches: generateRandomMatches(teams),
+                standings: initializeStandings(teams)
+            };
+
+            schedules.push(newSchedule);
+            currentScheduleIndex = schedules.length - 1;
+
+            showTab('existingSchedules');
+        };
+
+        if (imageFile) reader.readAsDataURL(imageFile);
+        else {
+            const newSchedule = {
+                name: name,
+                description: description,
+                teams: teams,
+                matches: generateRandomMatches(teams),
+                standings: initializeStandings(teams)
+            };
+            schedules.push(newSchedule);
+            currentScheduleIndex = schedules.length - 1;
+            showTab('existingSchedules');
+        }
+    }
+
+    function generateRandomMatches(teams) {
+        const matches = [];
+        const teamPairs = [];
+
+        for (let i = 0; i < teams.length; i++) {
+            for (let j = i + 1; j < teams.length; j++) {
+                teamPairs.push([teams[i], teams[j]]);
+            }
+        }
+
+        while (teamPairs.length) {
+            const randomIndex = Math.floor(Math.random() * teamPairs.length);
+            const [team1, team2] = teamPairs.splice(randomIndex, 1)[0];
+            matches.push({ team1, team2, team1Score: null, team2Score: null });
+        }
+
+        return matches;
+    }
+
+    function initializeStandings(teams) {
+        const standings = {};
+        teams.forEach(team => {
+            standings[team] = { P: 0, W: 0, D: 0, L: 0, GF: 0, GA: 0, GD: 0, PTS: 0 };
+        });
+        return standings;
+    }
+
+    function renderScheduleList() {
+        const list = document.getElementById("scheduleList");
+        list.innerHTML = '';
+        schedules.forEach((schedule, index) => {
+            const item = document.createElement("li");
+            item.textContent = schedule.name;
+            item.onclick = () => showScheduleDetails(index);
+            list.appendChild(item);
+        });
+    }
+
+    function showScheduleDetails(index) {
+        currentScheduleIndex = index;
+        const schedule = schedules[index];
+        
+        document.getElementById("tournamentName").textContent = schedule.name;
+        document.getElementById("tournamentDescription").textContent = schedule.description;
+        
+        if (schedule.image) {
+            document.getElementById("headerImage").src = schedule.image;
+            document.getElementById("headerImage").classList.remove("hidden");
+        } else {
+            document.getElementById("headerImage").classList.add("hidden");
+        }
+
+        renderStandings();
+        renderMatches();
+        showTab("scheduleDetails");
+    }
+
+    function renderMatches() {
+        const matchesDiv = document.getElementById("matchesList");
+        matchesDiv.innerHTML = '';
+        schedules[currentScheduleIndex].matches.forEach((match, index) => {
+            matchesDiv.innerHTML += `
+                <p onclick="openScoreModal(${index})" style="cursor: pointer;">
+                    ${match.team1} vs ${match.team2} - ${match.team1Score ?? ''} : ${match.team2Score ?? ''}
+                </p>
+            `;
+        });
+    }
+
+    function openScoreModal(index) {
+        currentMatchIndex = index;
+        const match = schedules[currentScheduleIndex].matches[index];
+        document.getElementById("modalMatchInfo").textContent = `${match.team1} vs ${match.team2}`;
+        document.getElementById("modalTeam1").textContent = match.team1;
+        document.getElementById("modalTeam2").textContent = match.team2;
+        document.getElementById("modalTeam1Score").value = match.team1Score ?? '';
+        document.getElementById("modalTeam2Score").value = match.team2Score ?? '';
+        
+        document.getElementById("scoreModal").style.display = 'block';
+    }
+
+    function closeModal() {
+        document.getElementById("scoreModal").style.display = 'none';
+    }
+
+    function saveScore() {
+        const match = schedules[currentScheduleIndex].matches[currentMatchIndex];
+        match.team1Score = parseInt(document.getElementById("modalTeam1Score").value) || 0;
+        match.team2Score = parseInt(document.getElementById("modalTeam2Score").value) || 0;
+
+        updateStandings();
+        renderMatches();
+        closeModal();
+    }
+
+    function updateStandings() {
+        const standings = initializeStandings(schedules[currentScheduleIndex].teams);
+
+        schedules[currentScheduleIndex].matches.forEach(match => {
+            const { team1, team2, team1Score, team2Score } = match;
+            if (team1Score !== null && team2Score !== null) {
+                standings[team1].P++;
+                standings[team2].P++;
+                standings[team1].GF += team1Score;
+                standings[team2].GF += team2Score;
+                standings[team1].GA += team2Score;
+                standings[team2].GA += team1Score;
+                standings[team1].GD = standings[team1].GF - standings[team1].GA;
+                standings[team2].GD = standings[team2].GF - standings[team2].GA;
+
+                if (team1Score > team2Score) {
+                    standings[team1].W++;
+                    standings[team2].L++;
+                    standings[team1].PTS += 3;
+                } else if (team2Score > team1Score) {
+                    standings[team2].W++;
+                    standings[team1].L++;
+                    standings[team2].PTS += 3;
+                } else {
+                    standings[team1].D++;
+                    standings[team2].D++;
+                    standings[team1].PTS++;
+                    standings[team2].PTS++;
+                }
+            }
+        });
+
+        // Convert standings to a sorted array
+        schedules[currentScheduleIndex].standings = Object.entries(standings)
+            .sort(([, a], [, b]) => b.PTS - a.PTS || b.GD - a.GD || b.GF - a.GF)
+            .reduce((acc, [team, stats]) => ({ ...acc, [team]: stats }), {});
+
+        renderStandings();
+    }
+
+    function renderStandings() {
+        const standingsDiv = document.getElementById("standingsTable");
+        standingsDiv.innerHTML = `
+            <table>
+                <tr>
+                    <th>Team</th>
+                    <th>P</th>
+                    <th>W</th>
+                    <th>D</th>
+                    <th>L</th>
+                    <th>GF</th>
+                    <th>GA</th>
+                    <th>GD</th>
+                    <th>PTS</th>
+                </tr>
+                ${Object.keys(schedules[currentScheduleIndex].standings).map(team => {
+                    const record = schedules[currentScheduleIndex].standings[team];
+                    return `
+                        <tr>
+                            <td onclick="showMatchesForTeam('${team}')" style="cursor: pointer; color: #4caf50;">${team}</td>
+                            <td>${record.P}</td>
+                            <td>${record.W}</td>
+                            <td>${record.D}</td>
+                            <td>${record.L}</td>
+                            <td>${record.GF}</td>
+                            <td>${record.GA}</td>
+                            <td>${record.GD}</td>
+                            <td>${record.PTS}</td>
+                        </tr>
+                    `;
+                }).join('')}
+            </table>
+        `;
+    }
+
+    function showMatchesForTeam(team) {
+        const matchesDiv = document.getElementById("matchesList");
+        matchesDiv.innerHTML = '';
+        
+        schedules[currentScheduleIndex].matches
+            .filter(match => match.team1 === team || match.team2 === team)
+            .forEach((match, index) => {
+                matchesDiv.innerHTML += `
+                    <p onclick="openScoreModal(${index})" style="cursor: pointer;">
+                        ${match.team1} vs ${match.team2} - ${match.team1Score ?? ''} : ${match.team2Score ?? ''}
+                    </p>
+                `;
+            });
+
+        showScheduleTab('matches');
+    }
+</script>
+
+</body>
+</html>
